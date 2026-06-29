@@ -434,26 +434,39 @@ function SpBank({ transactions }) {
   );
 }
 
+const POLL_MONTHS = { jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5, jul: 6, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11 };
+const POLL_TOD = { morning: 0, afternoon: 1, evening: 2 };
+
+// Session labels come in two formats — "15 May Morning" and "Day 10 (26 May)".
+// Parse the real session date (+ time-of-day) into a comparable number so we can
+// sort chronologically; unknown labels sort last. Higher = more recent.
+function pollSortKey(label = '') {
+  let day, mon;
+  const paren = label.match(/\((\d{1,2})\s+([A-Za-z]+)\)/);
+  if (paren) { day = +paren[1]; mon = paren[2]; }
+  else {
+    const lead = label.match(/^(\d{1,2})\s+([A-Za-z]+)/);
+    if (lead) { day = +lead[1]; mon = lead[2]; }
+  }
+  const m = mon ? POLL_MONTHS[mon.slice(0, 3).toLowerCase()] : undefined;
+  if (m === undefined || !day) return -1;
+  const todMatch = label.toLowerCase().match(/morning|afternoon|evening/);
+  const tod = todMatch ? POLL_TOD[todMatch[0]] : 0;
+  return ((m * 100 + day) * 10) + tod;
+}
+
 function Polls({ polls }) {
   if (!polls.length) return <section className="panel empty">No poll records found.</section>;
+  const sorted = [...polls].sort((a, b) => pollSortKey(b.sessionLabel) - pollSortKey(a.sessionLabel));
   return (
     <section className="panel">
       <h2>Polls</h2>
       <div className="cards">
-        {polls.map(poll => (
+        {sorted.map(poll => (
           <article className="card" key={poll._id}>
             <div className="card-head static">
               <strong>{poll.sessionLabel}</strong>
               <span>{poll.attemptedQuestions}/{poll.totalQuestions} attempted</span>
-            </div>
-            <div className="poll-responses">
-              {(poll.responses || []).map((item, i) => (
-                <div key={i} className={item.attempted ? 'attempted' : 'missed'}>
-                  <span>{item.pollName}</span>
-                  <p>{item.question}</p>
-                  <b>{item.response || 'Not attempted'}</b>
-                </div>
-              ))}
             </div>
           </article>
         ))}
