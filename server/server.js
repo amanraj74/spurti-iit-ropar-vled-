@@ -9,12 +9,9 @@ import { ALLOW_STUDENT_SEARCH, MONGO_URI, PORT, SAMAGAMA_AUTH_URL } from './conf
 import Student from './models/Student.js';
 import Session from './models/Session.js';
 import AttendanceRecord from './models/AttendanceRecord.js';
-import ChatRecord from './models/ChatRecord.js';
 import PollRecord from './models/PollRecord.js';
 import SPTransaction from './models/SPTransaction.js';
 import SessionEvent from './models/SessionEvent.js';
-import ChatSPReview from './models/ChatSPReview.js';
-import { recalculateStudentSp } from './scripts/lib/ingestion.js';
 import { leagueBand, levelFor, legendBadge, leaderboardGroup, groupLabel } from './services/levels.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -112,9 +109,8 @@ function excusedPayload(student) {
 async function studentPayload(student) {
   const email = student.email;
   const activeFilter = { status: { $ne: 'excused' } };
-  const [transactions, chats, polls, attendance, rankInfo, leaderboard, allStudents] = await Promise.all([
+  const [transactions, polls, attendance, rankInfo, leaderboard, allStudents] = await Promise.all([
     SPTransaction.find({ email }).sort({ dateTime: 1, createdAt: 1 }).lean(),
-    ChatRecord.find({ email }).sort({ sessionLabel: 1 }).lean(),
     PollRecord.find({ email }).sort({ sessionLabel: 1 }).lean(),
     AttendanceRecord.find({ email }).sort({ sessionLabel: 1 }).lean(),
     rankFor(email),
@@ -161,7 +157,6 @@ async function studentPayload(student) {
       leaderboardGroupLabel: groupLabel(myGroup)
     },
     transactions,
-    chats,
     polls,
     attendance,
     cohort: {
@@ -340,78 +335,6 @@ api.get('/admin/student/:id', adminGuard, async (req, res) => {
   res.json(await studentPayload(student));
 });
 
-api.get('/admin/chat-sp-reviews', adminGuard, async (req, res) => {
-  const status = String(req.query.status || 'pending');
-  const query = status === 'all' ? {} : { status };
-  const reviews = await ChatSPReview.find(query).sort({ dateTime: 1, createdAt: 1 }).limit(500).lean();
-  const enriched = reviews.map(r => {
-    const isPct = r.isPercent || false;
-    const displayDelta = isPct ? String(r.delta) + '%' : String(r.delta);
-    return { ...r, displayDelta, isPercent: isPct };
-  });
-  res.json(enriched);
-});
-
-api.post('/admin/chat-sp-reviews/:id/reject', adminGuard, async (req, res) => {
-  const review = await ChatSPReview.findById(req.params.id);
-  if (!review) return res.status(404).json({ error: 'Review not found' });
-  if (review.status !== 'pending') return res.status(409).json({ error: `Review is already ${review.status}` });
-  review.status = 'rejected';
-  review.reviewedBy = normalizeEmail(req.headers['x-admin-email']);
-  review.reviewedAt = new Date();
-  await review.save();
-  res.json(review);
-});
-
-api.post('/admin/chat-sp-reviews/:id/accept', adminGuard, async (req, res) => {
-  const review = await ChatSPReview.findById(req.params.id);
-  if (!review) return res.status(404).json({ error: 'Review not found' });
-  if (review.status !== 'pending') return res.status(409).json({ error: `Review is already ${review.status}` });
-
-  const email = normalizeEmail(req.body?.studentEmail || review.studentEmail);
-  const isPercent = review.isPercent || false;
-  if (!email || !email.includes('@')) return res.status(400).json({ error: 'A matched student email is required before accepting.' });
-
-  // Calculate delta: if percent-based, compute from current balance
-  let delta = Number(req.body?.delta ?? review.delta);
-  if (isPercent) {
-    const last = await SPTransaction.findOne({ email }).sort({ dateTime: -1, createdAt: -1 }).lean();
-    const currentBalance = Number(last?.balanceAfter ?? 0);
-    delta = Math.round(currentBalance * delta / 100);
-  }
-  if (!Number.isFinite(delta) || delta === 0) return res.status(400).json({ error: 'A non-zero SP delta is required.' });
-
-  const student = await Student.findOne({ email });
-  if (!student) return res.status(404).json({ error: 'Student not found' });
-  if (student.status === 'excused') return res.status(409).json({ error: 'Cannot apply new SP to an excused student.' });
-
-  const last = await SPTransaction.findOne({ email }).sort({ dateTime: -1, createdAt: -1 }).lean();
-  const transaction = await SPTransaction.create({
-    email,
-    studentId: student._id,
-    category: 'chat_manual_award',
-    sessionLabel: review.sessionLabel,
-    deltaMode: review.isPercent ? 'percentage' : 'absolute',
-    deltaValue: Number(req.body?.delta ?? review.delta),
-    appliedDelta: delta,
-    balanceAfter: Number(last?.balanceAfter ?? student.totalSp ?? 0) + delta,
-    reason: String(req.body?.reason || review.reason || '').trim() || `Manual chat SP by ${review.issuedByName}.`,
-    dateTime: review.dateTime
-  });
-
-  review.status = 'accepted';
-  review.reviewedBy = normalizeEmail(req.headers['x-admin-email']);
-  review.reviewedAt = new Date();
-  review.studentEmail = email;
-  review.studentId = student._id;
-  review.delta = delta;
-  review.reason = String(req.body?.reason || review.reason || '').trim() || review.reason;
-  review.transactionId = transaction._id;
-  await review.save();
-  await recalculateStudentSp(email);
-  res.json({ review, transaction });
-});
-
 api.get('/admin/active', adminGuard, (_req, res) => {
   const now = new Date();
   const cutoff = now.getTime() - 60_000;
@@ -501,7 +424,7 @@ api.get('/admin/analytics', adminGuard, async (_req, res) => {
     };
   });
 
-  const categoryTotals = ['initial', 'attendance', 'poll', 'chat', 'manual'].map(category => {
+  const categoryTotals = ['initial', 'attendance', 'poll', 'manual'].map(category => {
     const rows = activeTransactions.filter(t => t.category === category);
     return {
       category,

@@ -102,8 +102,8 @@ function Landing({ config, onStudent }) {
           <h1>Spurti Points track participation energy.</h1>
           <p className="lead">Spurti Points are a simple learning currency for showing up, participating, and staying engaged through the internship.</p>
           <div className="info-grid">
-            <Info title="What is it?" text="A motivation signal that reflects attendance, poll participation, and useful chat engagement." />
-            <Info title="How to get points" text="Attend eligible sessions, answer polls, and contribute positive or useful messages in the meeting chat." />
+            <Info title="What is it?" text="A motivation signal that reflects attendance and poll participation." />
+            <Info title="How to get points" text="Attend eligible sessions and answer polls to keep your engagement visible." />
             <Info title="Motive" text="To make consistency visible and help the cohort build disciplined learning habits." />
           </div>
           {config.allowStudentSearch ? (
@@ -261,9 +261,8 @@ function StudentView({ profile, onBack }) {
       </header>
       <LevelStatus student={student} />
       <StudentPulse profile={profile} badges={badges} nextActions={nextActions} />
-      <Tabs tab={tab} setTab={setTab} tabs={[['bank','SP Bank'], ['chats','Chats'], ['polls','Polls'], ['leaderboard','Leaderboard']]} />
+      <Tabs tab={tab} setTab={setTab} tabs={[['bank','SP Bank'], ['polls','Polls'], ['leaderboard','Leaderboard']]} />
       {tab === 'bank' && <SpBank transactions={profile.transactions} />}
-      {tab === 'chats' && <Chats chats={profile.chats} />}
       {tab === 'polls' && <Polls polls={profile.polls} />}
       {tab === 'leaderboard' && <LeaderboardTabs overall={profile.leaderboard} group={profile.groupLeaderboard} groupLabel={student.leaderboardGroupLabel} />}
     </main>
@@ -331,11 +330,10 @@ function LeaderboardTabs({ overall = [], group = [], groupLabel }) {
 }
 
 function StudentPulse({ profile, badges, nextActions }) {
-  const { student, cohort, attendance, polls, chats, transactions } = profile;
+  const { student, cohort, attendance, polls, transactions } = profile;
   const qualified = attendance.filter(a => a.qualified).length;
   const pollAttempted = polls.reduce((sum, p) => sum + p.attemptedQuestions, 0);
   const pollTotal = polls.reduce((sum, p) => sum + p.totalQuestions, 0);
-  const positiveChats = chats.filter(c => c.overallSentiment === 'positive').length;
   const trend = transactions.map(tx => ({ label: tx.sessionLabel || 'Start', value: tx.balanceAfter }));
   return (
     <section className="pulse-grid">
@@ -359,7 +357,6 @@ function StudentPulse({ profile, badges, nextActions }) {
         <div className="compare-list">
           <b>{qualified}/{attendance.length} attendance qualified</b>
           <b>{pollAttempted}/{pollTotal} polls attempted</b>
-          <b>{positiveChats}/{chats.length} positive chat sessions</b>
         </div>
       </div>
       <div className="pulse-card">
@@ -397,11 +394,9 @@ function buildBadges(profile) {
   const qualifiedPct = profile.attendance.length ? profile.attendance.filter(a => a.qualified).length / profile.attendance.length : 0;
   const pollAttempted = profile.polls.reduce((sum, p) => sum + p.attemptedQuestions, 0);
   const pollTotal = profile.polls.reduce((sum, p) => sum + p.totalQuestions, 0);
-  const positiveChats = profile.chats.filter(c => c.overallSentiment === 'positive').length;
   if (profile.student.rank <= 50) badges.push('Top 50');
   if (qualifiedPct >= 0.75) badges.push('Consistent Attendee');
   if (pollTotal && pollAttempted / pollTotal >= 0.75) badges.push('Poll Champion');
-  if (positiveChats >= 3) badges.push('Positive Contributor');
   if (profile.student.totalSp >= profile.cohort.averageSp) badges.push('Above Average');
   return badges.length ? badges : ['Getting Started'];
 }
@@ -411,7 +406,6 @@ function buildNextActions(profile) {
   if (profile.cohort.pointsToTop50 > 0) actions.push(`Earn ${profile.cohort.pointsToTop50} more SP to enter Top 50.`);
   if (profile.attendance.some(a => !a.qualified)) actions.push('Attend at least 75% of upcoming sessions to avoid attendance debit.');
   if (profile.polls.some(p => p.missedQuestions > 0)) actions.push('Attempt every poll question to avoid poll debit.');
-  if (!profile.chats.length) actions.push('Add useful meeting chat contributions to create a positive chat record.');
   actions.push('Check your SP Bank after each session to understand every credit and debit.');
   return actions.slice(0, 4);
 }
@@ -434,37 +428,6 @@ function SpBank({ transactions }) {
             <b>{tx.balanceAfter}</b>
             <p>{tx.reason}</p>
           </div>
-        ))}
-      </div>
-    </section>
-  );
-}
-
-function Chats({ chats }) {
-  const [open, setOpen] = useState('');
-  if (!chats.length) return <section className="panel empty">No chat records found.</section>;
-  return (
-    <section className="panel">
-      <h2>Chats</h2>
-      <div className="cards">
-        {chats.map(chat => (
-          <article className="card" key={chat._id}>
-            <button className="card-head" onClick={() => setOpen(open === chat.sessionLabel ? '' : chat.sessionLabel)}>
-              <strong>{chat.sessionLabel}</strong>
-              <span className={chat.overallSentiment}>{chat.overallSentiment}</span>
-            </button>
-            {open === chat.sessionLabel && (
-              <div className="message-list">
-                {chat.messages.map((msg, i) => (
-                  <div className="message" key={i}>
-                    <span>{msg.time}</span>
-                    <p>{msg.message}</p>
-                    <b className={msg.sentiment}>{msg.sentiment === 'positive' ? '+' : msg.sentiment === 'negative' ? '-' : '0'}</b>
-                  </div>
-                ))}
-              </div>
-            )}
-          </article>
         ))}
       </div>
     </section>
@@ -518,7 +481,6 @@ function AdminView({ admin, auth, onBack }) {
   const [attendance, setAttendance] = useState(null);
   const [active, setActive] = useState([]);
   const [analytics, setAnalytics] = useState(null);
-  const [spReviews, setSpReviews] = useState([]);
   const [stats, setStats] = useState(null);
   const [studentProfile, setStudentProfile] = useState(null);
 
@@ -556,22 +518,6 @@ function AdminView({ admin, auth, onBack }) {
     const res = await fetch(`${API}/admin/analytics`, { headers });
     setAnalytics(await res.json());
   };
-  const loadSpReviews = async () => {
-    const res = await fetch(`${API}/admin/chat-sp-reviews?status=pending`, { headers });
-    setSpReviews(await res.json());
-  };
-  const reviewAction = async (id, action) => {
-    const res = await fetch(`${API}/admin/chat-sp-reviews/${id}/${action}`, {
-      method: 'POST',
-      headers: { ...headers, 'Content-Type': 'application/json' },
-      body: JSON.stringify({})
-    });
-    if (!res.ok) {
-      const data = await res.json().catch(() => ({}));
-      alert(data.error || 'Review action failed.');
-    }
-    await loadSpReviews();
-  };
 
   useEffect(() => { loadLeaderboard(50); fetchStats(); }, []);
   const fetchStats = async () => {
@@ -587,7 +533,6 @@ function AdminView({ admin, auth, onBack }) {
       return () => clearInterval(id);
     }
     if (tab === 'analytics' && !analytics) loadAnalytics();
-    if (tab === 'sp-review' && !spReviews.length) loadSpReviews();
   }, [tab]);
 
   return (
@@ -597,7 +542,7 @@ function AdminView({ admin, auth, onBack }) {
         <div><p className="eyebrow">Admin Dashboard</p><h1>Spurti Control Room</h1></div>
         <div className="score-card"><span>Yet to onboard</span><strong>{stats?.yetToOnboard ?? admin.yetToOnboard ?? 0}</strong><span className="divider">|</span><span>Active</span><strong>{stats?.activeStudents ?? admin.activeStudents ?? admin.students ?? 0}</strong><span className="divider">|</span><span>Excused</span><strong>{stats?.excusedStudents ?? admin.excusedStudents ?? 0}</strong><em>{stats?.transactions ?? admin.transactions ?? 0} txns</em></div>
       </header>
-      <Tabs tab={tab} setTab={setTab} tabs={[['leaderboard','Leaderboard'], ['attendance','Attendance'], ['sp-review','SP Review'], ['live','Live'], ['analytics','Analytics'], ['students','Students']]} />
+      <Tabs tab={tab} setTab={setTab} tabs={[['leaderboard','Leaderboard'], ['attendance','Attendance'], ['live','Live'], ['analytics','Analytics'], ['students','Students']]} />
       {tab === 'leaderboard' && (
         <section className="panel">
           <div className="panel-head">
@@ -614,46 +559,11 @@ function AdminView({ admin, auth, onBack }) {
         </section>
       )}
       {tab === 'attendance' && <AdminAttendance data={attendance} onStudent={loadStudent} />}
-      {tab === 'sp-review' && <ChatSPReviewTable reviews={spReviews} onAction={reviewAction} onRefresh={loadSpReviews} />}
       {tab === 'live' && <LiveAnalytics active={active} />}
       {tab === 'analytics' && <Analytics data={analytics} />}
       {tab === 'students' && <AllStudentsPanel stats={stats} onStudent={loadStudent} auth={auth} />}
       {studentProfile && <div className="overlay"><section className="modal wide"><div className="modal-head"><h2>{studentProfile.student.name}</h2><button className="icon" onClick={() => setStudentProfile(null)}>x</button></div><SpBank transactions={studentProfile.transactions} /></section></div>}
     </main>
-  );
-}
-
-function ChatSPReviewTable({ reviews, onAction, onRefresh }) {
-  return (
-    <section className="panel">
-      <div className="panel-head">
-        <h2>Chat SP Review</h2>
-        <button className="secondary" onClick={onRefresh}>Refresh</button>
-      </div>
-      {!reviews.length ? <p className="empty">No pending chat SP reviews.</p> : (
-        <div className="matrix-wrap">
-          <table className="table review-table">
-            <thead><tr><th>Time</th><th>Student</th><th>SP</th><th>Issued by</th><th>Reason</th><th>Confidence</th><th>Action</th></tr></thead>
-            <tbody>{reviews.map(review => (
-              <tr key={review._id}>
-                <td>{new Date(review.dateTime).toLocaleString()}</td>
-                <td><strong>{review.studentName || 'Unmatched'}</strong><span>{review.studentEmail || 'No email match'}</span></td>
-                <td className={review.delta > 0 ? 'credit' : 'debit'}>{review.displayDelta || (review.delta > 0 ? `+${review.delta}` : review.delta)}</td>
-                <td>{review.issuedByName}</td>
-                <td><p>{review.reason}</p><em>{review.evidenceText}</em></td>
-                <td>{review.confidence}</td>
-                <td>
-                  <div className="review-actions">
-                    <button className="primary" disabled={!review.studentEmail} onClick={() => onAction(review._id, 'accept')}>Accept</button>
-                    <button className="secondary" onClick={() => onAction(review._id, 'reject')}>Reject</button>
-                  </div>
-                </td>
-              </tr>
-            ))}</tbody>
-          </table>
-        </div>
-      )}
-    </section>
   );
 }
 
