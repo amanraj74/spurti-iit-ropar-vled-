@@ -316,21 +316,13 @@ async function markSurveyComplete(email) {
   return student;
 }
 
-// Called by the student via the "I've submitted — continue" button or the
-// iframe-load detector. Uses the Samagama session email; falls back to the
-// posted email only when student search is enabled (local/dev). Production runs
-// with ALLOW_STUDENT_SEARCH=false, so there it is strictly session-authenticated.
-api.post('/survey/complete', async (req, res) => {
-  let email = await studentEmailFromRequest(req);
-  if (!email && ALLOW_STUDENT_SEARCH) email = normalizeEmail(req.body?.email);
-  if (!email) return res.status(401).json({ ok: false });
-  const student = await markSurveyComplete(email);
-  if (!student) return res.status(404).json({ ok: false, error: 'Student not found' });
-  res.json({ ok: true });
-});
+// NOTE: there is deliberately NO client-callable "mark complete" endpoint. The
+// flag is set ONLY by a real Google submission (the webhook below) or the
+// server-side sheet sync, so the modal cannot be dismissed by trust. The client
+// can only READ status via /survey/status and dismiss when it returns completed.
 
-// Lightweight completion check the modal polls (so a webhook-marked submission
-// auto-dismisses the modal without a page reload). Session-authenticated.
+// Completion check the modal polls and verifies on the "I've submitted" button.
+// Session-authenticated; reflects only server-set (webhook/sync) completion.
 api.get('/survey/status', async (req, res) => {
   const email = await studentEmailFromRequest(req);
   if (!email) return res.json({ completed: false });

@@ -766,42 +766,35 @@ function AllStudentsPanel({ stats, onStudent, auth }) {
 
 
 function SurveyModal({ survey, student, onDone }) {
-  const [submitting, setSubmitting] = useState(false);
+  const [checking, setChecking] = useState(false);
   const [note, setNote] = useState('');
-  const loadCount = useRef(0);
   const done = useRef(false);
 
   const enabled = survey?.enabled && survey.formUrl && student && !student.surveyCompleted;
 
-  // Mark complete, then dismiss. Shared by the iframe-load detector and the button.
-  async function markComplete(auto) {
+  // Verify against the server. The completion flag is set ONLY by a real Google
+  // submission (Apps Script webhook) or the server-side sheet sync — never by the
+  // client — so clicking "I've submitted" cannot dismiss the modal without a
+  // genuine response on record. showNote=true surfaces feedback for the button.
+  async function verifyStatus(showNote) {
     if (done.current) return;
-    setSubmitting(true);
-    setNote('');
+    if (showNote) { setChecking(true); setNote(''); }
     try {
-      const res = await fetch(`${API}/survey/complete`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: student.email })
-      });
-      if (res.ok) { done.current = true; onDone(); return; }
-      if (!auto) setNote('We could not confirm your submission. Make sure you are logged in and pressed Submit in the form.');
+      const r = await fetch(`${API}/survey/status`);
+      if (r.ok && (await r.json()).completed) { done.current = true; onDone(); return; }
+      if (showNote) setNote("We haven't received your response yet. Please make sure you pressed Submit in the form above — this window closes on its own once your response is recorded (it can take a few seconds).");
     } catch {
-      if (!auto) setNote('Network error — please try again in a moment.');
+      if (showNote) setNote('Network error — please try again in a moment.');
     } finally {
-      setSubmitting(false);
+      if (showNote) setChecking(false);
     }
   }
 
-  // Poll for webhook-driven completion (the production auto-detector): Google's
-  // Apps Script tells our server on submit; this notices and closes the modal.
+  // Poll for completion: the webhook (instant) or sheet sync sets the flag
+  // server-side; this notices and closes the modal without a page reload.
   useEffect(() => {
     if (!enabled) return;
-    const id = setInterval(async () => {
-      try {
-        const r = await fetch(`${API}/survey/status`);
-        if (r.ok && (await r.json()).completed && !done.current) { done.current = true; onDone(); }
-      } catch { /* ignore */ }
-    }, 6000);
+    const id = setInterval(() => verifyStatus(false), 5000);
     return () => clearInterval(id);
   }, [enabled]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -815,12 +808,9 @@ function SurveyModal({ survey, student, onDone }) {
     src += `&usp=pp_url&${encodeURIComponent(survey.emailEntryId)}=${encodeURIComponent(email)}`;
   }
 
-  // Google navigates the embedded form to its "response recorded" page on submit,
-  // which fires a second iframe load. First load = the form; a later one = submitted.
-  function handleIframeLoad() {
-    loadCount.current += 1;
-    if (loadCount.current >= 2) markComplete(true);
-  }
+  // After a real submit Google reloads the iframe to its confirmation page; treat
+  // that as a hint to re-check the server (the webhook is the source of truth).
+  function handleIframeLoad() { verifyStatus(false); }
 
   return (
     <div className="survey-overlay" role="dialog" aria-modal="true" aria-labelledby="survey-title">
@@ -836,8 +826,8 @@ function SurveyModal({ survey, student, onDone }) {
         <iframe title="Spurti feedback survey" src={src} className="survey-frame" onLoad={handleIframeLoad} />
         <div className="survey-actions">
           {!hard && <button type="button" className="survey-ghost" onClick={onDone}>Maybe later</button>}
-          <button type="button" className="survey-primary" disabled={submitting} onClick={() => markComplete(false)}>
-            {submitting ? 'Checking…' : "I've submitted — continue"}
+          <button type="button" className="survey-primary" disabled={checking} onClick={() => verifyStatus(true)}>
+            {checking ? 'Checking…' : "I've submitted — continue"}
           </button>
         </div>
         {note && <p className="survey-note">{note}</p>}
