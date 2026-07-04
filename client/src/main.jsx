@@ -433,12 +433,38 @@ function Tabs({ tab, setTab, tabs }) {
 }
 
 function SpBank({ transactions }) {
+  const [category, setCategory] = useState('all');
+  const [search, setSearch] = useState('');
+  const filtered = transactions.filter(tx => {
+    if (category !== 'all' && tx.category !== category) return false;
+    if (search && !tx.sessionLabel?.toLowerCase().includes(search.toLowerCase())) return false;
+    return true;
+  });
   return (
     <section className="panel">
-      <h2>SP Bank Statement</h2>
+      <div className="bank-filter">
+        <select value={category} onChange={e => setCategory(e.target.value)} aria-label="Filter by category">
+          <option value="all">All categories</option>
+          <option value="attendance">Attendance</option>
+          <option value="poll">Poll</option>
+          <option value="initial">Initial</option>
+          <option value="manual">Manual</option>
+        </select>
+        <input
+          type="text"
+          placeholder="Search session label..."
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+          aria-label="Filter by session label"
+        />
+        {filtered.length !== transactions.length && (
+          <span className="bank-count">{filtered.length} of {transactions.length}</span>
+        )}
+      </div>
       <div className="bank">
         <div className="bank-header"><span>Date & time</span><span>Credit</span><span>Debit</span><span>Balance</span><span>Reason</span></div>
-        {transactions.map(tx => (
+        {filtered.length === 0 && <p className="muted bank-empty">No transactions match your filter.</p>}
+        {filtered.map(tx => (
           <div className="bank-row" key={tx._id}>
             <span>{new Date(tx.dateTime).toLocaleString()}</span>
             <strong className="credit">{tx.appliedDelta > 0 ? `+${tx.appliedDelta}` : ''}</strong>
