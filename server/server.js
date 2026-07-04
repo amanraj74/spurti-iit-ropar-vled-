@@ -127,20 +127,42 @@ function parseCookies(header = '') {
   }).filter(Boolean));
 }
 
+// 60s in-memory cache for Samagama /api/auth/me lookups. Each entry is keyed
+// by the chatengine_token cookie value; a null result (bad token / Samagama
+// down) is cached too so a flood of bad requests doesn't hammer Samagama.
+const _samagamaCache = new Map();
+const SAMAGAMA_CACHE_TTL_MS = 60_000;
+function _samagamaCacheGet(token) {
+  const entry = _samagamaCache.get(token);
+  if (!entry) return undefined;
+  if (Date.now() - entry.at > SAMAGAMA_CACHE_TTL_MS) {
+    _samagamaCache.delete(token);
+    return undefined;
+  }
+  return entry.data;
+}
+
 // Validate the student's Samagama session by forwarding their chatengine_token
-// cookie to Samagama's internal auth endpoint. Returns the email on success.
+// cookie to Samagama's internal auth endpoint. Returns the parsed JSON on
+// success, or null on 401 / timeout / network failure. Hits a 60s in-memory
+// cache so repeated API calls (e.g. /survey/status polling every 5s) don't
+// round-trip to Samagama on every request.
 async function getSamagamaUser(chatengineToken) {
   if (!chatengineToken) return null;
+  const cached = _samagamaCacheGet(chatengineToken);
+  if (cached !== undefined) return cached;
+  let result = null;
   try {
     const res = await fetch(SAMAGAMA_AUTH_URL, {
       headers: { cookie: `chatengine_token=${chatengineToken}` },
       signal: AbortSignal.timeout(5000)
     });
-    if (!res.ok) return null;
-    return await res.json();
+    if (res.ok) result = await res.json();
   } catch {
-    return null;
+    // network / timeout / non-JSON body -> cache null so we don't retry for 60s
   }
+  _samagamaCache.set(chatengineToken, { at: Date.now(), data: result });
+  return result;
 }
 
 async function studentEmailFromRequest(req) {
