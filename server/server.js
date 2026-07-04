@@ -542,17 +542,27 @@ api.get('/admin/analytics', adminGuard, async (_req, res) => {
     from200plus: spValues.filter(v => v >= 200).length
   };
 
+  // Bucket attendance by session label in a single O(A) pass, then map over
+  // sessions in O(S). Replaces the previous O(S*A) inner .filter() inside the
+  // sessions.map(); ~50 sessions * ~50k attendance rows = ~2.5M ops -> ~50k.
+  const bySession = new Map();
+  for (const a of activeAttendance) {
+    const bucket = bySession.get(a.sessionLabel) || { rows: [], qualified: 0, minutes: 0 };
+    bucket.rows.push(a);
+    if (a.qualified) bucket.qualified++;
+    bucket.minutes += Number(a.attendedMinutes || 0);
+    bySession.set(a.sessionLabel, bucket);
+  }
   const attendanceBySession = sessions.map(session => {
-    const rows = activeAttendance.filter(a => a.sessionLabel === session.label);
-    const qualified = rows.filter(r => r.qualified).length;
-    const totalMinutes = rows.reduce((sum, r) => sum + Number(r.attendedMinutes || 0), 0);
+    const bucket = bySession.get(session.label) || { rows: [], qualified: 0, minutes: 0 };
+    const total = bucket.rows.length;
     return {
       label: session.label,
-      totalStudents: rows.length,
-      qualified,
-      notQualified: rows.length - qualified,
-      qualifiedPct: rows.length ? Math.round((qualified / rows.length) * 100) : 0,
-      avgMinutes: rows.length ? Math.round(totalMinutes / rows.length) : 0,
+      totalStudents: total,
+      qualified: bucket.qualified,
+      notQualified: total - bucket.qualified,
+      qualifiedPct: total ? Math.round((bucket.qualified / total) * 100) : 0,
+      avgMinutes: total ? Math.round(bucket.minutes / total) : 0,
       sessionMinutes: session.totalMinutes
     };
   });
